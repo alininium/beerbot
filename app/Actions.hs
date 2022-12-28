@@ -5,14 +5,15 @@ module Actions (
 
 import           DataTypes
 import           Parser
+import Debug.Trace
 import           Data.Text                        (unpack, toLower)
 import           Data.Maybe
-import           Data.List                        (intersperse)
+import           Data.List (intercalate)
 
 import           Telegram.Bot.API
 
 userIdToMention :: String -> String -> String
-userIdToMention number name = "[" ++ name ++ "](tg://user?=id=" ++ number ++ ")"
+userIdToMention number name = "[" ++ name ++ "](tg://user?id=" ++ number ++ ")"
 
 userNameToMention :: String -> String 
 userNameToMention name = "[" ++ name ++ "](https://t.me/" ++  name ++ ")"
@@ -28,24 +29,37 @@ userLinkFromMessage message = do
   Just . userIdToMention userIdNumber . unpack $ userName
   
 rpReply :: Emoji -> Subject -> Verb -> Object -> String
-rpReply emoji subject verb object = foldl1 (\x y -> x ++ ' ':y) [emoji, "|", subject, verb, object]
-
+rpReply emoji subject verb object = unwords [emoji, "|", subject, verb, object]
 
 messageToCommand :: Message -> Maybe Command
-messageToCommand message = messageText message >>= readInput . unpack . toLower
+messageToCommand message = messageText message >>= readInput . unpack . toLower 
+
+rpInstructionToString :: Subject -> Object -> RPInstruction -> String
+rpInstructionToString subject object (RPInstruction verb emoji) = rpReply emoji subject verb object
+
 
 commandToAction :: Message -> Command -> Maybe Action
-commandToAction message (RP (RPInstruction verb emoji)) = do
+commandToAction message (RP instruction) =  do
     replyMessage <- messageReplyToMessage message
 
     object <- userLinkFromMessage replyMessage
     subject <- userLinkFromMessage message
-    Just . ReplyText $ rpReply emoji subject verb object
+    Just . ReplyText $ rpInstructionToString subject object instruction
 
 commandToAction message (RPTargeted (RPInstruction verb emoji) targetName) = do
     let object = userNameToMention targetName
     subject <- userLinkFromMessage message
     Just . ReplyText $ rpReply emoji subject verb object
 
-commandToAction message (SimpleResponse text) = Just . ReplyText $ text
+commandToAction message (RPMultiple instructions) = do
+    replyMessage <- messageReplyToMessage message
+
+    object <- userLinkFromMessage replyMessage
+    subject <- userLinkFromMessage message
+    let text = intercalate "\n" $ fmap (rpInstructionToString subject object) instructions
+    Just . ReplyText $ text
+
+
+
+commandToAction _ (SimpleResponse text) = Just . ReplyText $ text
 

@@ -1,8 +1,10 @@
 module Parser (
-    readInput
+    readInput,
+    rpMultiple
 ) where
 
 import           DataTypes
+import           Debug.Trace
 import           Text.ParserCombinators.Parsec hiding (spaces)
 
 spaces :: Parser ()
@@ -19,28 +21,28 @@ simpleResponseInstruction :: Parser String
 simpleResponseInstruction = parserFromMap simpleResponseMapping
 
 rpCommand :: Parser Command
-rpCommand = try (do
+rpCommand = try $ do
   rp <- try rpInstruction
-  return $ RP rp)
+  return $ RP rp
 
 targetedRpCommand :: Parser Command
-targetedRpCommand = try (do
-  rp <- rpInstruction 
-  _ <- spaces
+targetedRpCommand = try $ do
+  rp <- rpInstruction
+  spaces
   _ <- char '@'
   target <- many1 letter
-  return $ RPTargeted rp target)
+  return $ RPTargeted rp target
 
 simpleCommandPrompt :: Parser Command
-simpleCommandPrompt = try (do
-  responseText <- parserFromMap simpleResponseMapping
-  return $ SimpleResponse responseText
-  )
+simpleCommandPrompt = try $ SimpleResponse <$> simpleResponseInstruction
+
+rpMultiple :: Parser Command
+rpMultiple = try $ RPMultiple <$> sepBy1 rpInstruction (try (char ' ') <|> try newline)
 
 command :: Parser Command
-command = targetedRpCommand <|> rpCommand <|> simpleCommandPrompt
+command = (targetedRpCommand <|> rpMultiple <|> rpCommand <|> simpleCommandPrompt) <* eof
 
 readInput :: String -> Maybe Command
-readInput input = case parse command "name" input of 
+readInput input = case parse command "name" input of
   Left err -> Nothing
   Right c -> Just c

@@ -6,12 +6,16 @@ import           Actions
 
 import           Data.Text                        (pack)
 import           Data.Maybe
+import Debug.Trace
 
 import           System.Environment.MrEnv (envAsString)
 import           Configuration.Dotenv (loadFile, defaultConfig)
 import           Telegram.Bot.API
 import           Telegram.Bot.Simple
 import           Telegram.Bot.API (User(userFirstName, userId))
+
+import Database.MongoDB hiding (Action)
+import Control.Monad.Trans (liftIO)
 
 
 echoBot :: BotApp Model Action

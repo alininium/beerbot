@@ -27,6 +27,8 @@ dependencies:
 - dotenv
 - containers
 - parsec
+- mongoDB
+- mtl
 
 ghc-options:
 - -Wall
