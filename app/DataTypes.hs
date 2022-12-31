@@ -62,9 +62,11 @@ rpMapping =
   , ("дефенестрировать",          RPInstruction "отправил(а) в свободное падение"      "🏠")
   ]
 
+getStringFromMapping :: [(String, a)] -> String
+getStringFromMapping a = intercalate "\n" $ map fst a
 
 helpText :: String
-helpText = "Доступные рп команды:\n\n" ++ ( intercalate "\n" $ map fst rpMapping)
+helpText = "Доступные команды:\n\n" ++ (getStringFromMapping simpleResponseMapping) ++ "\n\nрп команды:\n\n" ++ (getStringFromMapping rpMapping)
 
 simpleResponseMapping :: [(String, String)]
 simpleResponseMapping = 
@@ -76,5 +78,6 @@ simpleResponseMapping =
   , ("спокойной ночи", "Cладких снов 🥺")
   , ("слава партии", "Слава Партии!")
   , ("cлава партии!", "Слава Партии!")
+  , ("исходный код", "https://github.com/alininium/beerbot")
   , ("помощь", helpText)
   ]
