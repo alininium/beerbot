@@ -1,7 +1,7 @@
 CREATE TYPE pronoun AS ENUM ('he', 'she', 'it', 'they', 'gendergap', 'unk');
 CREATE TABLE "users"
 (
-	"telegram_id" integer NOT NULL,
+	"telegram_id" bigint NOT NULL,
 	"username" text, 
 	"pronoun" text NOT NULL DEFAULT 'unk',
 	"used_mask" integer NOT NULL DEFAULT 0,

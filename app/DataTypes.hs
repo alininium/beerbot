@@ -11,16 +11,16 @@ module DataTypes (
     Action (..),
     Pronoun (..),
     User (..),
+    UserFromMessage (..),
     userFromTuple,
     userToTuple,
     rpMapping,
     simpleResponseMapping,
-    genderMapping
+    setGenderMapping
 ) where
 
 import Data.List (intercalate)
 import Data.Text (Text)
-import Database.PostgreSQL.Simple
 
 type Model = String
 
@@ -36,14 +36,17 @@ data Command = RP RPInstruction String
              | RPTargeted RPInstruction Object 
              | SimpleResponse String  
              -- | RPMultiple [RPInstruction] 
-             | RegularMessageWithI Text deriving Show
+             | RegularMessageWithI Text 
+             | GenderChange Pronoun deriving Show
 
 data Action
   = NoAction
-  | AnalyzeText Text Text Integer
-  | ReplyText String
+  | AnalyzeText UserFromMessage Text
+  | ReplyText UserFromMessage Text
+  | ReplyRp UserFromMessage UserFromMessage RPInstruction Text
+  | SetGender UserFromMessage Pronoun
 
-data Pronoun = HeHim | SheHer | TheyThem | ItIts | Gendergap | Unset deriving Show
+data Pronoun = HeHim | SheHer | TheyThem | ItIts | Gendergap | Unset deriving (Show, Eq)
 
 
 
@@ -56,6 +59,10 @@ data User = TelegramUser {
   used_plur :: Integer
 }  deriving Show
 
+data UserFromMessage = UserFromMessage {
+  from_message_telegram_id :: Integer,
+  from_message_username:: Text
+} deriving Show
 
 pronounFromString :: Text -> Pronoun
 pronounFromString s = case s of "he"        -> HeHim
@@ -71,7 +78,7 @@ pronounToString p = case p of HeHim     -> "he"
                               TheyThem  -> "they"
                               ItIts     -> "it"
                               Gendergap -> "gendergap"
-                              Unset     -> "uns"
+                              Unset     -> "unk"
 
 userFromTuple :: (Integer, Text, Text, Integer, Integer, Integer) -> User
 userFromTuple (id, username, pronoun, used_mask, used_fem, used_plur) = TelegramUser { 
@@ -127,6 +134,24 @@ rpMapping =
   ]
 
 
+setGenderMapping :: [(String, Pronoun)]
+setGenderMapping = 
+  [ (word ++ " " ++ secondWord , gender) | word <- ["пронауны", "пронаун", "местоимения", "гендер", "пронаунс", "род", "пол"],
+                                          (secondWord, gender) <- [ ("-", Unset)
+                                                                  , ("гендергеп", Gendergap)
+                                                                  , ("гендергэп", Gendergap)
+                                                                  , ("они", TheyThem)
+                                                                  , ("она", SheHer)
+                                                                  , ("оно", ItIts)
+                                                                  , ("он", HeHim)
+                                                                  , ("жен", SheHer)
+                                                                  , ("муж", HeHim)
+                                                                  , ("м", HeHim)
+                                                                  , ("ж", SheHer)
+                                          ]
+
+  ]
+
 
 getStringFromMapping :: [(String, a)] -> String
 getStringFromMapping a = intercalate "\n" $ map fst a
@@ -153,4 +178,5 @@ simpleResponseMapping =
   , ("команды рп", helpTextRp)
   , ("помощь", helpText)
   , ("команды", helpText)
+  , ("местоимения", "введите\nместоимения он/она/оно/они/гендергеп\nчтобы поменять свои местоимения")
   ]

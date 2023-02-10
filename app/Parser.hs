@@ -5,7 +5,6 @@ module Parser (
 ) where
 
 import           DataTypes
-import           Debug.Trace
 import           Text.ParserCombinators.Parsec hiding (spaces)
 import Control.Monad
 import Data.Text (Text, intercalate, pack, append, replace)
@@ -75,8 +74,11 @@ regularMessageWithI = try $ RegularMessageWithI . Data.Text.replace "\n" " " . i
 -- jrpMultiple :: Parser Command
 -- jrpMultiple = try $ RPMultiple <$> sepBy1 rpInstruction (try (char ' ') <|> try newline)
 
+setGender :: Parser Command
+setGender = GenderChange <$> parserFromMap setGenderMapping
+
 command :: Parser Command
-command = (targetedRpCommand <|>  simpleCommandPrompt <|> rpCommand <|> regularMessageWithI) <* eof
+command = (targetedRpCommand <|>  simpleCommandPrompt <|> rpCommand <|> setGender <|> regularMessageWithI) <* eof
 
 deb :: String -> Maybe Text
 deb i = case parse sentenseWithI "name" i of

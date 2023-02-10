@@ -3,19 +3,17 @@
 module Actions (
     messageToCommand,
     commandToAction,
+    applyPronouns,
 ) where
 
 import           DataTypes
 import           Parser
 import Debug.Trace
-import           Data.Text                        (unpack, toLower)
-import           Data.Maybe
-import           Data.List (intercalate, isPrefixOf)
+import           Data.Text                        (pack, unpack, toLower)
+import           Data.List (isPrefixOf)
 
 import           Telegram.Bot.API
 
-import Control.Monad.Trans (liftIO)
-import Telegram.Bot.API (User(userFirstName))
 
 userIdToMention :: String -> String -> String
 userIdToMention number name = "[" ++ name ++ "](tg://user?id=" ++ number ++ ")"
@@ -28,7 +26,7 @@ userIdToString (UserId int) = show int
 
 replace :: Eq a => [a] -> [a] -> [a] -> [a]
 replace a b s = replace' a b s []
-    where replace' a b (s:st) h = if isPrefixOf a (s:st) then h ++ b ++ (removePrefix a (s:st))
+    where replace' a b (s:st) h = if a `isPrefixOf` (s:st) then h ++ b ++ removePrefix a (s:st)
                                                          else replace' a b st (h++[s])
           replace' _ _ [] h = h
           removePrefix (a:at) (s:st) = removePrefix at st
@@ -43,12 +41,13 @@ applyPronouns pronoun = replace "@" ending
                                     Gendergap -> "(а)"
                                     Unset     -> "(а)"
 
-userLinkFromMessage :: Message -> Maybe String
-userLinkFromMessage message = do
+getUserId :: Telegram.Bot.API.User -> Integer
+getUserId user = case userId user of (UserId a) -> a
+
+userFromMessage :: Message -> Maybe UserFromMessage
+userFromMessage message = do
   user <- messageFrom message
-  let userName = userFirstName user
-  let userIdNumber = userIdToString . userId $ user
-  Just . userIdToMention userIdNumber . unpack $ userName
+  Just (UserFromMessage{from_message_telegram_id = getUserId user, from_message_username = userFirstName user})
 
 rpReply :: Emoji -> Subject -> Verb -> Object -> String
 rpReply emoji subject verb object = unwords [emoji, "|", subject, verb, object]
@@ -56,68 +55,39 @@ rpReply emoji subject verb object = unwords [emoji, "|", subject, verb, object]
 messageToCommand :: Message -> Maybe Command
 messageToCommand message = messageText message >>= readInput . unpack . toLower
 
-rpInstructionToString :: Subject -> Object -> Pronoun -> String -> RPInstruction -> String
-rpInstructionToString subject object gender posttext (RPInstruction verb emoji) = (rpReply emoji subject (applyPronouns gender verb) object) ++ posttext
 
 extractUserGender :: [(String, Pronoun)] -> String -> Pronoun
 extractUserGender ((s, p):mt) user = if user == s then p else extractUserGender mt user
-extractUserGender [] user = Gendergap
+extractUserGender [] _ = Gendergap
 
 commandToAction :: Message -> Command -> Maybe Action
 commandToAction message (RP instruction posttext) =  do
     replyMessage <- messageReplyToMessage message
 
-    object <- userLinkFromMessage replyMessage
-    subject <- userLinkFromMessage message
+    object <- userFromMessage replyMessage
+    subject <- userFromMessage message
 
-    from <- messageFrom message
-    username <- unpack <$> userUsername from
-    let gender = extractUserGender genderMapping username
-
-    Just . ReplyText $ trace ((show subject) ++ " " ++ (show gender)) $ rpInstructionToString subject object gender posttext instruction
+    Just $ ReplyRp object subject instruction (pack posttext)
 
 commandToAction message (RPTargeted instruction targetName) = do
-    let object = userNameToMention targetName
-    subject <- userLinkFromMessage message
-    let gender = extractUserGender genderMapping subject
-
-    --pipe <- liftIO $ DB.connect (DB.host "127.0.0.1")
-    --e <- trace "connecting" $ liftIO $ DB.access pipe DB.master "pivobot" run
-    --DB.close pipe
-    from <- messageFrom message
-    username <- unpack <$> userUsername from
-
-
-    let gender = extractUserGender genderMapping username
-    let text = rpInstructionToString subject object gender "" instruction
-
-
-    Just . ReplyText $ text
-
-{-
--- {- commandToAction message (RPMultiple instructions) = do
-    replyMessage <- messageReplyToMessage message
-
-    object <- userLinkFromMessage replyMessage
-    subject <- userLinkFromMessage message
-
-    from <- messageFrom message
-    username <- unpack <$> userUsername from
-
-    let gender = extractUserGender genderMapping username
-    let text = intercalate "\n" $ fmap (rpInstructionToString subject object gender) instructions
-    Just . ReplyText $ text -}
--}
-
+    subject <- userFromMessage message
+    Just $ ReplyText subject ""
 
 commandToAction message (RegularMessageWithI txt) = do
-    from <- messageFrom message
-    user <- userFirstName <$> messageFrom message
-    let userId = userIdToInt . Telegram.Bot.API.userId $ from
-    if txt == "" then Just NoAction else return $ AnalyzeText txt user userId
+    user <- userFromMessage message
+    if txt == "" then Just NoAction else return $ AnalyzeText user txt
 
-commandToAction _ (SimpleResponse text) = Just . ReplyText $ text
+commandToAction message (GenderChange p) = do
+    user <- userFromMessage message
+    Just . SetGender user $ p
+
+commandToAction message (SimpleResponse text) = do
+    from <- messageFrom message
+    username <- unpack <$> userUsername from
+    let user_telegram_id = case userId from of (UserId a) -> a
+
+    Just . ReplyText UserFromMessage{from_message_telegram_id = user_telegram_id, from_message_username = pack username} $ pack text
 
 userIdToInt :: Telegram.Bot.API.UserId -> Integer
-userIdToInt (UserId id) = id 
+userIdToInt (UserId id) = id
 

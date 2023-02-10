@@ -2,19 +2,14 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ExtendedDefaultRules #-}
 {-# LANGUAGE DeriveGeneric #-}
+{-# OPTIONS_GHC -Wno-name-shadowing #-}
 
 module Main where
 
 import DataTypes
-    ( userFromTuple,
-      Action(..),
-      Model,
-      Pronoun(Unset),
-      User(..),
-      userToTuple )
-import Actions ( commandToAction, messageToCommand )
+import Actions ( commandToAction, messageToCommand, applyPronouns )
 
-import           Data.Text                        (pack, unpack, Text)
+import           Data.Text                        (pack, unpack, Text, append)
 import Data.Maybe ( fromJust, fromMaybe, isJust )
 import Debug.Trace ()
 
@@ -29,7 +24,7 @@ import Telegram.Bot.Simple
     ( startBot_, (<#), reply, BotApp(..), Eff, ReplyMessage(..) )
 
 import Control.Monad.Trans (liftIO)
-import Control.Monad (when, void)
+import Control.Monad (void)
 
 import Network.HTTP
     ( getResponseBody,
@@ -41,16 +36,16 @@ import Network.HTTP
 import Network.URI ( URI, parseURI )
 import Data.ByteString.Lazy.UTF8 as BLU ( fromString )
 import Codec.Binary.UTF8.String (utf8Encode)
-import Data.Text.Lazy.Encoding (encodeUtf8)
 import Database.PostgreSQL.Simple
     ( execute, connectPostgreSQL, Only(Only) )
 import GHC.Generics ( Generic )
 import Data.Aeson ( FromJSON, decode )
 import qualified Database.PostgreSQL.Simple as Database
-import GHC.Integer (eqInteger)
-import qualified Network.HTTP.Stream as Database
 
-data AnalyzeResult = AnalyzeResult {
+import Data.ByteString.UTF8 (fromString)
+import Data.ByteString.Char8 (putStr)
+
+newtype AnalyzeResult = AnalyzeResult {
   response :: PronounsUsed
 } deriving (Generic, Show)
 
@@ -62,6 +57,7 @@ data PronounsUsed = PronounsUsed {
 
 instance FromJSON AnalyzeResult
 instance FromJSON PronounsUsed
+
 
 echoBot :: BotApp Model Action
 echoBot = BotApp
@@ -95,10 +91,6 @@ updateToAction update _
   | otherwise = Nothing
 
 
---pipe <- liftIO $ DB.connect (DB.host "127.0.0.1")
---e <- trace "connecting" $ liftIO $ DB.access pipe DB.master "pivobot" run
---DB.close pipe
-
 formJSON :: Text -> String
 formJSON t = utf8Encode $ "{\"string\": \"" ++ unpack t ++ "\"}"
 
@@ -107,10 +99,6 @@ request t uri = setRequestBody (Request{ rqURI = uri,
                          rqMethod = GET,
                          rqHeaders = [],
                          rqBody = "" }) ("application/json", formJSON t)
-
--- handleE :: Monad m => (ConnError -> m a) -> Either ConnError a -> m a
--- handleE h (Left e) = h e
--- handleE _ (Right v) = return v
 
 updateUserPronounsUsed :: DataTypes.User -> PronounsUsed -> DataTypes.User
 updateUserPronounsUsed u p = TelegramUser {
@@ -129,24 +117,65 @@ analyzeGender text = do
     let resp = response <$> (Data.Aeson.decode a :: Maybe AnalyzeResult)
     return $ fromMaybe PronounsUsed {masc = 0, fem = 0, plur = 0} resp
 
+-- rpInstructionToString subject object gender posttext (RPInstruction verb emoji) = rpReply emoji subject (applyPronouns gender verb) object ++ posttext
+
+-- userIdToMention number name = "[" ++ name ++ "](tg://user?id=" ++ number ++ ")"
+
+userToMention :: User -> String
+userToMention u =  "[" ++ unpack (username u) ++ "](tg://user?id=" ++ show (telegram_id u) ++ ")"
+
+rpInstructionToString :: RPInstruction -> User -> User -> Pronoun  -> Text
+rpInstructionToString (RPInstruction verb emoji) object subject gender = pack $ unwords [emoji, "|", subject_name, gendered_verb, object_name]
+  where subject_name = userToMention subject
+        object_name = userToMention object
+        gendered_verb = applyPronouns gender verb
+
+userGender :: User -> Pronoun
+userGender u = if pronoun u /= Unset then pronoun u else used_more
+  where used_more = case (used_mask u, used_fem u) of (mask, fem) | mask > fem -> HeHim
+                                                                  | fem > mask -> SheHer
+                                                                  | otherwise -> Gendergap
+printUTF :: Text -> IO ()
+printUTF = Data.ByteString.Char8.putStr . Data.ByteString.UTF8.fromString . unpack
 
 handleAction :: Action -> Model -> Eff Action Model
 handleAction action model = case action of
-  ReplyText text -> model <# do
-    reply $ constructReply text
-  NoAction -> model <# (do
-    return ())
+  ReplyText user text -> model <# do
+    conn <- liftIO dbGetConn
+    user <- liftIO $ getUser conn user
+    reply $ constructReply . unpack $ text
 
-  AnalyzeText text userName userId -> model <# liftIO (do
+  ReplyRp object subject instruction posttext -> model <# do
+    liftIO $ putStrLn "in reply rp"
+    conn <- liftIO dbGetConn
+    object  <- liftIO $ getUser conn object
+    subject <- liftIO $ getUser conn subject
+    let text = rpInstructionToString instruction object subject (userGender subject)
+
+    liftIO $ printUTF text
+
+    reply $ constructReply . unpack $ text `append` posttext
+
+
+  AnalyzeText user text -> model <# liftIO (do
     genderUsage <- analyzeGender text
-    conn <- connectPostgreSQL "postgres://postgres:postgres@127.0.0.1:5432"
-    user <- getUser conn userId userName
+    conn <- dbGetConn
+    user <- getUser conn user
     dbUpdateUser conn (updateUserPronounsUsed user genderUsage)
     return ())
 
+  SetGender user p -> model <# do
+    conn <- liftIO $ dbGetConn
+    user <- liftIO $  getUser conn user
+    _ <- liftIO $ dbUpdateUser conn (user {pronoun=p})
+    reply $ constructReply "Местоимения успешно обновлены"
+  NoAction -> model <# return ()
+
 -- Provides consistency with the database, creating a new user if nessesary 
-getUser :: Database.Connection -> Integer -> Text -> IO DataTypes.User
-getUser conn userId userName = do
+getUser :: Database.Connection -> UserFromMessage -> IO DataTypes.User
+getUser conn
+        UserFromMessage {from_message_telegram_id = userId,
+                         from_message_username    = userName} = do
   users <- dbGetUser conn userId
   if null users
     then do
@@ -163,6 +192,9 @@ getUser conn userId userName = do
       return newUser
     else return $ head users
 
+
+dbGetConn :: IO Database.Connection
+dbGetConn = connectPostgreSQL "postgres://postgres:postgres@127.0.0.1:5432"
 
 dbGetUser :: Database.Connection -> Integer -> IO [DataTypes.User]
 dbGetUser conn userId = map userFromTuple <$> Database.query conn "select telegram_id,username,pronoun,used_mask,used_fem,used_plur from users where telegram_id = ?" (Only userId)
