@@ -1,11 +1,14 @@
+{-# LANGUAGE OverloadedStrings #-}
 module Parser (
     readInput,
-    rpMultiple
+    deb,
 ) where
 
 import           DataTypes
 import           Debug.Trace
 import           Text.ParserCombinators.Parsec hiding (spaces)
+import Control.Monad
+import Data.Text (Text, intercalate, pack, append, replace)
 
 spaces :: Parser ()
 spaces = skipMany1 space
@@ -23,7 +26,9 @@ simpleResponseInstruction = parserFromMap simpleResponseMapping
 rpCommand :: Parser Command
 rpCommand = try $ do
   rp <- try rpInstruction
-  return $ RP rp
+  postfix <- try (many anyChar)
+  return $ RP rp postfix
+
 
 targetedRpCommand :: Parser Command
 targetedRpCommand = try $ do
@@ -36,11 +41,47 @@ targetedRpCommand = try $ do
 simpleCommandPrompt :: Parser Command
 simpleCommandPrompt = try $ SimpleResponse <$> simpleResponseInstruction
 
-rpMultiple :: Parser Command
-rpMultiple = try $ RPMultiple <$> sepBy1 rpInstruction (try (char ' ') <|> try newline)
+
+upToI :: Parser Text
+upToI = pack . reverse <$> ("" <$ char 'я' <|> upToI' "")
+  where {upToI' t = trailingSpaceI <|> nextChar
+        where trailingSpaceI = t <$ try (string " я")
+              nextChar = do
+                c <- noneOf "."
+                upToI' (c:t)
+  }
+
+
+sentenseWithI :: Parser Text
+sentenseWithI = try $ do
+  before <- try upToI
+  _ <- oneOf " ." <|> ' ' <$ eof
+  after <- pack <$> many (noneOf ".")
+  _ <- Control.Monad.void (char '.') <|> eof
+  return $ before `append` " я " `append` after `append` ". "
+
+sentenseWithNoI :: Parser Text
+sentenseWithNoI = try $ do
+  _ <- many1 (noneOf ".я")
+  _ <- Control.Monad.void (char '.') <|> eof
+  return ""
+
+regularMessageWithI :: Parser Command
+regularMessageWithI = try $ RegularMessageWithI . Data.Text.replace "\n" " " . intercalate "." . filter (/="") <$> parser
+  where parser = many1 (sentenseWithI <|> sentenseWithNoI <|> singleDot)
+        singleDot = "" <$ pack . (:[]) <$> char '.'
+
+
+-- jrpMultiple :: Parser Command
+-- jrpMultiple = try $ RPMultiple <$> sepBy1 rpInstruction (try (char ' ') <|> try newline)
 
 command :: Parser Command
-command = (targetedRpCommand <|> rpMultiple <|> rpCommand <|> simpleCommandPrompt) <* eof
+command = (targetedRpCommand <|>  simpleCommandPrompt <|> rpCommand <|> regularMessageWithI) <* eof
+
+deb :: String -> Maybe Text
+deb i = case parse sentenseWithI "name" i of
+  Left err -> Nothing
+  Right c -> Just c
 
 readInput :: String -> Maybe Command
 readInput input = case parse command "name" input of

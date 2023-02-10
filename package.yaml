@@ -27,8 +27,13 @@ dependencies:
 - dotenv
 - containers
 - parsec
-- mongoDB
+- postgresql-simple
 - mtl
+- HTTP
+- network-uri
+- bytestring
+- aeson
+- utf8-string
 
 ghc-options:
 - -Wall
