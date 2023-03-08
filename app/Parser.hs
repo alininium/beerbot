@@ -25,8 +25,8 @@ simpleResponseInstruction = parserFromMap simpleResponseMapping
 rpCommand :: Parser Command
 rpCommand = try $ do
   rp <- try rpInstruction
-  postfix <- try (many anyChar)
-  return $ RP rp postfix
+  postfix <- option "" (char ' ' >> try (many anyChar))
+  return $ RP rp (" " ++ postfix)
 
 
 targetedRpCommand :: Parser Command
@@ -82,10 +82,10 @@ command = (targetedRpCommand <|>  simpleCommandPrompt <|> rpCommand <|> setGende
 
 deb :: String -> Maybe Text
 deb i = case parse sentenseWithI "name" i of
-  Left err -> Nothing
+  Left _ -> Nothing
   Right c -> Just c
 
 readInput :: String -> Maybe Command
 readInput input = case parse command "name" input of
-  Left err -> Nothing
+  Left _ -> Nothing
   Right c -> Just c
